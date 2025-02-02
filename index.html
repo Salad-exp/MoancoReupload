@@ -2223,17 +2223,328 @@
 </head>
 
 <body>
-	<div id="container" style="width:100%;height:100%;"></div>
-	<script src="vs/loader.js"></script>
-	<script type="text/javascript">
-		require.config({
-			paths: {
-				'vs': 'vs'
-			}
-		});
+  <div class="editor-container">
+      <div id="tabs-container" class="tabs-container"></div>
+      <div id="container" style="width:100%;height:calc(100% - 35px);"></div>
+  </div>
+  <style>
+      .editor-container {
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+      }
+      .tabs-container {
+          background-color: #141414;
+          display: flex;
+          height: 35px;
+          overflow-x: auto;
+          border-bottom: 1px solid #333;
+          gap: 0;
+      }
+      .tab {
+          display: flex;
+          align-items: center;
+          padding: 0 15px;
+          background-color: #2d2d2d;
+          color: #969696;
+          border-right: 1px solid #1e1e1e;
+          min-width: 120px;
+          max-width: 200px;
+          position: relative;
+          cursor: pointer;
+          transition: background-color 0.2s, color 0.2s;
+          user-select: none;
+      }
+      .tab.active {
+          background-color: #0F0F0F;
+          color: #ffffff;
+      }
+      .tab-icon {
+          width: 20px;
+          height: 20px;
+          margin-right: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center; 
+          position: relative; 
+          top: 2px;
+      }
+      .tab-icon svg {
+          width: 16px;
+          height: 16px;
+      }
+      .tab-title {
+          flex-grow: 1;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          font-size: 13px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      }
+      .tab-title.editing {
+          background: #3d3d3d;
+          border: 1px solid #525252;
+          padding: 2px 4px;
+          border-radius: 3px;
+          outline: none;
+      }
+      .tab-close {
+          margin-left: 8px;
+          opacity: 0.7;
+          transition: opacity 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          border-radius: 3px;
+      }
+      .tab-close:hover {
+          opacity: 1;
+          background-color: rgba(255,255,255,0.1);
+      }
+      .tab.new-tab {
+          min-width: 10px;
+          max-width: 10px;
+          justify-content: center;
+          background-color: transparent;
+          border: none;
+          margin-left: -2px;
+      }
+      .tab.new-tab:hover {
+          background-color: rgba(255,255,255,0.1);
+      }
+      @keyframes tabAppear {
+          from {
+              opacity: 0;
+              transform: translateY(-10px);
+          }
+          to {
+              opacity: 1;
+              transform: translateY(0);
+          }
+      }
+      @keyframes tabRemove {
+          to {
+              opacity: 0;
+              transform: translateX(-10px);
+          }
+      }
+      .tab.new {
+          animation: tabAppear 0.2s ease-out;
+      }
+      .tab.removing {
+          animation: tabRemove 0.2s ease-out;
+      }
+  </style>
+  <script src="vs/loader.js"></script>
+  <script type="text/javascript">
+      require.config({
+          paths: {
+              'vs': 'vs'
+          }
+      });
 
-		var editor;
-		var Proposals = [];
+      let editor;
+      let Proposals = [];
+      let currentTab = null;
+      let tabs = [];
+
+      const luaIcon = `<img src="luaicon.png" alt="Lua Icon" style="width: 20px; height: 20px;" />`;
+
+        class Tab {
+            constructor(title, content = '') {
+                this.id = 'tab-' + Math.random().toString(36).substr(2, 9);
+                this.title = title;
+                this.content = content;
+                this.element = null;
+            }
+        }
+
+        function saveTabs() {
+          const tabsData = tabs.map(tab => ({
+        id: tab.id,
+        title: tab.title,
+        content: tab.content
+    }));
+    localStorage.setItem('editorTabs', JSON.stringify(tabsData));
+}
+function loadTabs() {
+    const savedTabs = localStorage.getItem('editorTabs');
+    if (savedTabs) {
+        const tabsData = JSON.parse(savedTabs);
+        tabsData.forEach(tabData => {
+            addTab(tabData.title, tabData.content, tabData.id);
+        });
+    } else {
+        addTab('New Tab 1'); 
+    }
+}
+
+        function makeEditable(titleElement, tab) {
+            titleElement.contentEditable = true;
+            titleElement.classList.add('editing');
+            titleElement.focus();
+            
+            const range = document.createRange();
+            range.selectNodeContents(titleElement);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+
+            function finishEditing() {
+                titleElement.contentEditable = false;
+                titleElement.classList.remove('editing');
+                const newTitle = titleElement.textContent.trim();
+                if (newTitle) {
+                    tab.title = newTitle;
+                } else {
+                    titleElement.textContent = tab.title;
+                }
+            }
+
+            titleElement.onblur = finishEditing;
+            titleElement.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    finishEditing();
+                }
+                if (e.key === 'Escape') {
+                    titleElement.textContent = tab.title;
+                    finishEditing();
+                }
+            };
+        }
+
+        function createTabElement(tab) {
+            const tabElement = document.createElement('div');
+            tabElement.className = 'tab new';
+            tabElement.setAttribute('data-tab-id', tab.id);
+            
+            const iconElement = document.createElement('div');
+            iconElement.className = 'tab-icon';
+            iconElement.innerHTML = luaIcon;
+            
+            const titleElement = document.createElement('div');
+            titleElement.className = 'tab-title';
+            titleElement.textContent = tab.title;
+            
+            titleElement.ondblclick = (e) => {
+                e.stopPropagation();
+                makeEditable(titleElement, tab);
+            };
+            
+            const closeButton = document.createElement('div');
+            closeButton.className = 'tab-close';
+            closeButton.innerHTML = '✕';
+            closeButton.onclick = (e) => {
+                e.stopPropagation();
+                if (tabs.length > 1) {
+                    removeTab(tab.id);
+                }
+            };
+            
+            tabElement.appendChild(iconElement);
+            tabElement.appendChild(titleElement);
+            tabElement.appendChild(closeButton);
+            
+            tabElement.onclick = () => switchTab(tab.id);
+            
+            return tabElement;
+        }
+
+        function createNewTabButton() {
+            const newTabButton = document.createElement('div');
+            newTabButton.className = 'tab new-tab';
+            newTabButton.innerHTML = '+';
+            newTabButton.onclick = () => {
+                const newTab = addTab('New Tab ' + (tabs.length + 1));
+            };
+            return newTabButton;
+        }
+
+        function addTab(title, content = '', id = null) {
+    const tab = new Tab(title, content);
+    if (id) tab.id = id;
+    tabs.push(tab);
+    
+    const tabsContainer = document.getElementById('tabs-container');
+    const newTabButton = tabsContainer.querySelector('.new-tab');
+    
+    tab.element = createTabElement(tab);
+    if (newTabButton) {
+        tabsContainer.insertBefore(tab.element, newTabButton);
+    } else {
+        tabsContainer.appendChild(tab.element);
+        tabsContainer.appendChild(createNewTabButton());
+    }
+    
+    switchTab(tab.id);
+    saveTabs();
+    return tab;
+}
+
+function removeTab(tabId) {
+    const tabIndex = tabs.findIndex(t => t.id === tabId);
+    if (tabIndex === -1) return;
+    
+    if (tabs.length <= 1) return;
+    
+    const tab = tabs[tabIndex];
+    tab.element.classList.add('removing');
+    
+    setTimeout(() => {
+        tabs.splice(tabIndex, 1);
+        tab.element.remove();
+        
+        if (currentTab === tabId) {
+            switchTab(tabs[Math.min(tabIndex, tabs.length - 1)].id);
+        }
+        saveTabs();
+    }, 200);
+}
+function switchTab(tabId) {
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    
+    tabs.forEach(t => {
+        if (t.element) {
+            t.element.classList.remove('active');
+        }
+    });
+    
+    if (currentTab !== tabId) {
+        if (currentTab) {
+            const oldTab = tabs.find(t => t.id === currentTab);
+            if (oldTab) {
+                oldTab.content = editor.getValue();
+                saveTabs();
+            }
+        }
+        
+        editor.setValue(tab.content);
+        tab.element.classList.add('active');
+        currentTab = tabId;
+    }
+}
+
+function setupAutosave() {
+    let saveTimeout;
+    editor.onDidChangeModelContent(() => {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            if (currentTab) {
+                const tab = tabs.find(t => t.id === currentTab);
+                if (tab) {
+                    tab.content = editor.getValue();
+                    saveTabs();
+                }
+            }
+        }, 1); 
+    });
+}
+
 
     var enableAntiSkid;
     var disableAntiSkid;
@@ -2265,7 +2576,7 @@
 				base: 'vs-dark',
 				inherit: true,
 				colors: {
-					"editor.background": '#0F0F0F', //ur background color
+					"editor.background": '#141414', //ur background color
 				},
 				rules: [{
 						token: 'global',
@@ -2326,6 +2637,9 @@
 					}
 			});
 
+      loadTabs();
+      setupAutosave();
+
 			EnableAutoComplete = function(){
 				editor.updateOptions({
 					suggestOnTriggerCharacters: true,
@@ -2383,24 +2697,22 @@
         document.body.removeEventListener("mouseleave",handleleave,false);
         
       }
-			editor.onDidChangeModelContent(function (e) {
-				try{
-				this.luaparse.parse(editor.getValue());
-				monaco.editor.setModelMarkers(editor.getModel(),'luaparse');
-				}
-				catch(Err){
-					monaco.editor.setModelMarkers(editor.getModel(),'luaparse',[{
-						startLineNumber: Err.line,
-						startColumn: Err.column,
-						endLineNumber: Err.line,
-						endColumn: Err.column,
-						message: Err.message,
-						severity: 3
-					}]);
-				}
-				window.chrome.webview.postMessage(editor.getValue());
-			});
-
+      editor.onDidChangeModelContent(function (e) {
+            try {
+                this.luaparse.parse(editor.getValue());
+                monaco.editor.setModelMarkers(editor.getModel(),'luaparse');
+            }
+            catch(Err) {
+                monaco.editor.setModelMarkers(editor.getModel(),'luaparse',[{
+                    startLineNumber: Err.line,
+                    startColumn: Err.column,
+                    endLineNumber: Err.line,
+                    endColumn: Err.column,
+                    message: Err.message,
+                    severity: 3
+                }]);
+            }
+        });
 			GetText = function () {
 				return editor.getValue();
 			}
